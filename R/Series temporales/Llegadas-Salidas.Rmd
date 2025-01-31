@@ -1,0 +1,302 @@
+---
+title: ""
+output: html_document
+date: "2024-10-03"
+---
+Ejercicio analisis de tres series de tiempo con descomposición multiplicativa, ajuste de modelo, pruebas del ajuste del modelo y proyección, basandose en periodos designados
+```{r}
+library(ggfortify)
+library(forecast)
+library(fpp2)
+library(data.table)
+library(TTR)
+library(xts)
+library(tidyverse)
+library(lubridate)
+library(quantmod)
+library(readxl)
+library(ggplot2)
+library(car)
+library(astsa)
+library(gamair)
+library(mgcv)
+library(dplyr)
+library(scales)
+```
+
+
+```{r}
+datos <- read_excel("datos/Datos_llegadas_salidas_CR.xlsx")
+datos  <- datos[1:110,]#Seleccionar datos hasta febrero 2020
+```
+
+
+```{r}
+datos$diferencia <- datos$Llegada -datos$Salidas
+
+datos <- datos %>%
+  mutate(diferenciacion = diferencia - lead(diferencia))
+
+datos_ts <- ts(datos, start = c(2000, 1), frequency = 12)
+```
+##Análisis exploratorio de los datos
+```{r}
+datos$Año <- as.Date(datos$Fecha)
+ggplot(datos, aes(x = Año)) + 
+  geom_line(aes(y = Llegada, color = "Llegadas"), size = 1) + 
+  geom_line(aes(y = Salidas, color = "Salidas"), size = 1) +
+  geom_line(aes(y = diferenciacion, color = "Diferenciacion"), size = 1, na.rm = TRUE) +
+  labs(title = "Entradas, salidas y diferenciación del país",
+       x = "Fecha",
+       y = "Cantidad de personas (miles)",
+       color = "Tipo") +
+  scale_color_manual(values = c("Llegadas" = "darkgreen", "Salidas" = "red", "Diferenciacion" = "blue")) +
+  scale_x_date(labels = date_format("%Y")) + 
+  scale_y_continuous(labels = label_number(scale = 1/1000)) +  
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+Con el fin de poder analizar los componentes de cada una de las series con mayor seguridad se decide separar los gráficos
+```{r}
+autoplot(datos_ts[,c(2, 3, 5)], facets = TRUE, colour=TRUE) +
+  ylab("") + xlab("Año") +
+  theme_minimal() +
+  guides(colour="none")
+```
+A simple vista se puede observar que la serie de personas que llegan al país ($S_t$) se puede observar patrón de aumento y decrecimiento bastante regular por lo que existe estacionalidad, se puede observar cierta tendencia creciente sin embargo es bastante debíl, no se lográ identificar patrones cíclicos, a simple vista no se logra observar movimiento irregular dado a que las variaciones son constantes.
+Con respecto a la serie de personas que salen del país ($L_t$) se puede observar aumentos que se repiten a lo largo del tiempo por lo que existe estacionalidad,existe una ligera tendencia creciente, no se logra observar ciclos, no se supone que exista movimiento irregular.
+Mientras que la serie sobre la diferenciación($V_t$) posee estacionalidad con un patron con muchas oscilaciones, sin embargo no muestra una tendencia clara a simple vista, no se observan ciclos, es posible que no exista movimiento irregular.
+
+Para verificar lo anterior se procede a realizar gráficos que permiten analizar cada uno de los comoponetes
+```{r}
+datos.llegadas <- ts(datos$Llegada, start = c(2011, 1), frequency = 12)
+datos.salidas <- ts(datos$Salidas, start = c(2011, 1), frequency = 12)
+datos.diferencia <- ts(datos$diferenciacion, start = c(2011, 1), frequency = 12)
+```
+
+```{r}
+ggseasonplot(datos.llegadas, year.labels=FALSE, continuous=TRUE)
+ggseasonplot(datos.salidas, year.labels=FALSE, continuous=TRUE)
+ggseasonplot(datos.diferencia, year.labels=FALSE, continuous=TRUE)
+```
+Para las tres series se encuentran meses donde se tienen comportamientos y patrones similares durante los diferentes años, por lo que hay estacionalidad.Además, el nivel de aglomeración de las lineas como indicador de tendencia intuye que tanto salidas como llegadas poseen tendencia, por el contrario a diferenciación.
+```{r}
+autoplot(datos_ts[,c(2, 3, 5)], facets = TRUE, colour=TRUE) +
+  ylab("") + xlab("Año") +
+  theme_minimal() +
+  geom_smooth() +
+  guides(colour="none")
+```
+Se puede observar que en las series de llegadas y salidas poseen una tendencia creciente, mientras que diferenciación posee una tendencia muy ligera decreciente.
+
+## Descomposición clásica más apropiada a las series
+Se opta por utilizar descomposición clasica multiplicativa para las series llegadas, salidas y diferenciación dado a que se observa un aumento en la variación alrededor de la tendencia. Se descarta el uso de descomposición STL debido a que no se observan outliers.
+-Llegadas
+```{r}
+llegadas <- decompose(datos.llegadas,"multiplicative")
+autoplot(llegadas)
+```
+-Salidas
+```{r}
+salidas <- decompose(datos.salidas,"multiplicative")
+autoplot(salidas)
+```
+-Diferencia
+```{r}
+diferencia <- decompose(datos.diferencia,"multiplicative")
+autoplot(diferencia)
+```
+En los gráficos anteriores se logra confirmar las observaciones respecto a los componentes que se mencionaron, para llegadas y salidas se observa tendencia creciente, estacionalidad y poco ruido dado que este se mantiene cercano a cero, mientras que para diferenciación se observa estacionalidad, no tendencia y un mayor error a las otras series.
+
+#Separación de las series en datos de entrenamiento y testeo.
+```{r}
+test.llegadas <- ts(datos.llegadas[99:110], start = c(2019, 3), frequency = 12)
+
+test.salidas <- ts(datos$Salidas[99:110], start = c(2019, 3), frequency = 12)
+
+test.diferencia <- ts(datos.diferencia[99:110], start = c(2019, 3), frequency = 12)
+
+training.llegadas <- ts(datos.llegadas[1:98], start = c(2011, 1), frequency = 12)
+
+training.salidas <- ts(datos$Salidas[1:98], start = c(2011, 1), frequency = 12)
+
+training.diferencia <- ts(datos.diferencia[1:98], start = c(2011, 1), frequency = 12)
+```
+
+#Ajuste de modelos de regresión
+-Modelo de regresión de salidas
+Modelo Estacional
+```{r}
+mods.s <- tslm(training.salidas~trend+season)
+summary(mods.s)
+```
+Se puede observar que este modelo obtiene un $R^2$ mayor al 0.8 por lo que se puede esperear a que se ajuste a la serie de tiempo de llegada
+Prueba supuestos
+```{r}
+shapiro.test(mods.s$residuals)
+checkresiduals(mods.s)
+```
+El modelo cumple con el supuesto de normalidad por la prueba y dado que el gráfico de normalidad se presenta una distribución aparentemente normal,en el gráfico evaluación de residuos se observa que en promedio se encuentran relativamente centrados en cero y existe variación, mientras que la autocorrelación los residuos se encuentran en su mayoría dentro de las celdas de contención y el nivel de significancia de la prueba de Breusch-Godfrey es pequeño por lo que existe una autocorrelación baja.
+  
+Modelo tendencia
+```{r}
+mods.t <- tslm(training.salidas~trend)
+summary(mods.t)
+```
+Se puede observar que este modelo obtiene un $R^2$ muy cercano a 0 por lo que se puede esperar a que no se ajuste a la serie de tiempo de llegada de la mejor manera.
+Prueba supuestos
+```{r}
+shapiro.test(mods.t$residuals)
+checkresiduals(mods.t)
+```
+Igual que el anterior el los residuos cumplen con el supuesto de normalidad con respecto a la prueba Shappiro y en el grafico se observa similar a una normal, existe mayor variación en los residuos en la evaluación de los residuos por lo que no se espera a que se encuentren en promedio centrados en cero, con respecto a la autocorrelación el nivel de significancia de la prueba de Breusch-Godfrey es muy pequeño.
+    
+-Modelos de regresión de llegadas
+Modelo estacional
+```{r}
+modl.s <- tslm(training.llegadas~trend+season)
+summary(modl.s)
+```
+Se puede observar que este modelo obtiene un $R^2$ muy cercano a 1, por lo que se puede esperar que se ajuste a la serie de tiempo de llegada
+Prueba supuestos
+```{r}
+shapiro.test(modl.s$residuals)
+checkresiduals(modl.s)
+```
+En la evaluación de residuos se obseva que se encuentran relativamente centrados en 0 y una varianza relativamente constante, se puede esperar que los residuos se comporten de forma normal dado a que la prueba Shapiro-Wilk y su distribución centrada en 0 y aproximadamente normal. Sin embargo, no se puede corroborar autocorrelación  al menos que  se compare con un alfa muy pequeño.
+  
+Modelo tendencia
+```{r}
+modl.t <- tslm(training.llegadas~trend)
+summary(modl.t)
+```
+Se puede observar que este modelo obtiene un $R^2$ cercano a 0, por lo que se puede esperar a que el modelo no se ajuste a la serie de tiempo de llegada
+
+Prueba supuestos
+```{r}
+shapiro.test(modl.t$residuals)
+checkresiduals(modl.t)
+```
+En la evaluación de residuos se encuentran relativamente centrados en 0, dado al nivel de significancia moderado de la prueba de Shapiro-Wilk( 0.05) se rechaza que los residuos se comporten de forma normal, mientras que para la prueba de Breusch-Godfrey se rechaza autocorrelación por un nivel de significancia cercano a 0.
+  
+-Modelo de regresión de diferenciación
+Modelo estacional
+```{r}
+modd.s <- tslm(training.diferencia~trend+season)
+summary(modd.s)
+```
+Se puede observar que este modelo obtiene un $R^2$ cercano a 1, por lo que se puede esperar a que se ajuste a la serie de diferenciación.
+Prueba supuestos
+```{r}
+shapiro.test(modd.s$residuals)
+checkresiduals(modd.s)
+```
+Se observa en la evaluaciónde residuos que estos son centrados en 0 y existe una varianza constante, en autocorrelación la autocorrelación de residuos pordemos observer alta correlación consigo misma, que los residuos se encuentran entre las bandas y si se comparase el nivel de significancia de la prueba con un alpha bastante pequeño se podría esperar existencia de autocorrelación,finalmente se prueba normalidad dada la distribución aparentemente normal en el gráfico de normalidad y un nivel de significancia alto en la prueba shappiro.
+
+Modelo de tendencia
+```{r}
+modd.t <- tslm(training.diferencia~trend)
+summary(modd.t)
+```
+Se puede observar que este modelo obtiene un $R^2$ muy lejano a 1, por lo que se puede esperar a que no se ajuste a la serie de diferenciación.
+Prueba supuestos
+```{r}
+shapiro.test(modd.t$residuals)
+checkresiduals(modd.t)
+```
+En la evaluación de residuos se encuentran relativamente centrados en 0 y con variación constante, sin embargo se observa cierto patrón lo cual indicaría que no se esta logrando capturar estacionalidad presente en la serie. Existen barras que se sobresalen de las lineas de significancia y mediante la prueba dado que el nivel de significancia es muy pequeño se puede sospechar correlación entre los residuos. Se presenta normlaidad en los residuos dado que su distribución se centra en 0 y se asemeja a una normal, además no se rechaza la prueba de normalidad de Shappiro.
+
+Para las tres series se recomienda utilizar el modelo estacional dado a que brindan un mejor ajuste a las observaciones
+#Modelos de suavizamiento exponencial 
+Se opta por utilizar el método Holt-Winter dado a que las series muestran estacionalidad y tendencia leve, dado que la serie de diferenciación posee valores negativos se procede a realizar método aditivo para que se adapte de mejor manera. 
+-Salidas
+```{r}
+ht1 <- hw(training.salidas,seasonal="multiplicative")
+ht1$model
+```
+Los parámetros de suavizamiento de nivel(0.08), tendencia(0.03) y estacionalidad(0.0004) son bastante pequeños, con los siguientes valores iniciales aproximados nivel de la serie de 57087, tendencia de 414 y componente estacional con valores similares.
+
+-Llegadas
+```{r}
+ht2 <- hw(training.llegadas,seasonal="multiplicative")
+ht2$model
+```
+Los parámetros de suavizamiento de nivel(0.07), tendencia(0.0001) y estacionalidad(0.0002) son bastante pequeños, con los siguientes valores iniciales aproximados nivel de la serie de 177836, tendencia de 923 y componente estacional con valores similares.
+-Diferenciación
+```{r}
+ht3 <- hw(training.diferencia, seasonal="additive")
+ht3$model
+```
+
+#4.Pronóstico de las series para los próximos 12 meses
+-Pronóstico salidas
+```{r}
+ps.hw <- hw(training.salidas, seasonal="multiplicative", h=12)
+
+autoplot(ps.hw)+
+  ggtitle('Pronóstico usando método Holt-Winters de salidas') + xlab("Año") +
+  ylab("Cantidad de personas (miles)")+
+    scale_y_continuous(labels = label_number(scale = 1/1000))
+```
+```{r}
+accuracy(ps.hw,test.salidas)
+```
+
+```{r}
+ps.regre<-forecast(mods.s,h=12)
+autoplot(ps.regre)+
+  ggtitle('Pronóstico usando modelo de regresión de salidas') + xlab("Año") +
+  ylab("Cantidad de personas (miles)")+
+    scale_y_continuous(labels = label_number(scale = 1/1000))
+```
+```{r}
+accuracy(ps.regre,test.salidas)
+```
+
+-Pronóstico llegadas
+```{r}
+pl.hw <- hw(training.llegadas, seasonal="multiplicative", h=12)
+
+autoplot(pl.hw)+
+  ggtitle('Pronóstico usando método Holt-Winters de llegadas') + xlab("Año") +
+  ylab("Cantidad de personas (miles)")+
+    scale_y_continuous(labels = label_number(scale = 1/1000))
+```
+```{r}
+accuracy(pl.hw,test.llegadas)
+```
+
+```{r}
+pl.regre<-forecast(modl.s,h=12)
+autoplot(pl.regre)+
+  ggtitle('Pronóstico usando modelo de regresión de salidas') + xlab("Año") +
+  ylab("Cantidad de personas (miles)")+
+    scale_y_continuous(labels = label_number(scale = 1/1000))
+```
+```{r}
+accuracy(pl.regre,test.llegadas)
+```
+
+-Pronóstico diferenciación
+```{r}
+pd.hw <- hw(training.diferencia, seasonal="additive", h=12)
+
+autoplot(pd.hw)+
+  ggtitle('Pronóstico usando método Holt-Winters de diferenciación') + xlab("Año") +
+  ylab("Cantidad de personas (miles)")+
+    scale_y_continuous(labels = label_number(scale = 1/1000))
+```
+```{r}
+accuracy(pd.hw,test.diferencia)
+```
+
+```{r}
+pd.regre<-forecast(modd.s,h=12)
+autoplot(pd.regre)+
+  ggtitle('Pronóstico usando modelo de regresión de diferenciación') + xlab("Año") +
+  ylab("Cantidad de personas (miles)")+
+    scale_y_continuous(labels = label_number(scale = 1/1000))
+```
+```{r}
+accuracy(pd.regre,test.diferencia)
+```

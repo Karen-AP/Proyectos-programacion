@@ -1,0 +1,176 @@
+--Ejercicios para análisis de datos en series temporales, graficación, descomposición y proyección
+
+```{r,echo=FALSE}
+library(ggplot2)
+library(forecast)
+library(plotly)
+library(fpp2)
+library(astsa)
+library(car)
+library(gamair)
+library(mgcv)
+library(dplyr)
+library(tidyverse)
+```
+
+#Lista 1 Tema 1 analisis descriptivo y 2 descomposicion
+-- 1.Clasifique las siguientes series (discreta o continua, univariada o multivariada)
+a.Índice diario de bolsa de valores durante el período de enero 1990 a diciembre 2010.
+Discreta y univariada
+b.Registro de la marea en un lugar específico durante 30 días.
+Continua y univariada
+c.Presión sanguínea de una mujer durante el embarazo.
+Continua y multivariada
+d.Temperatura promedio diario durante el año 2019.
+Discreta y univariada
+e.Registro diario de nacimiento y defunciones durante el año 2010.
+Dicreta y multivariada
+
+-- 2.En la base de datos matricula.csv se refiere a la matrícula de primer grado de los años 1957 s 2006, en Costa Rica.
+Importe los datos a R.
+```{r}
+library(readr)
+matricula <- read_csv("datos/matricula.csv")
+```
+Gráfico de la serie.
+```{r}
+plot(matricula$ano,matricula$matricula, type ="l")
+```
+Características de la serie.
+  Tendencia creciente, no hay estacionalidad y presenta ciclo
+  En la base de datos nacimiento.csv se tienen las cifras de los nacimientos mensuales inscritos en Costa Rica de enero de 1990 a diciembre de 1995.
+a. Importe los datos a R.
+```{r}
+nacimiento= read_csv("datos/nacimiento.csv", col_names =FALSE)
+```
+Elabore un gráfico de la serie.
+```{r}
+colnames(nacimiento) <- c("año","nacimientos")
+nac.ts=ts(nacimiento$nacimientos,start=c(
+1990,1),frequency=12)
+ts.plot(nac.ts)
+```
+Características de la serie.
+Estacionalidad: patron general repetitivo 
+Ciclo: hay una repeticion del comportamiento anualmente,cada dos años existe un descenso
+No hay tendencia general a largo plazo
+
+Descomposición de la serie
+```{r}
+aditivo=decompose(nac.ts,type="additive")
+autoplot(aditivo)
+```
+--4.En la base de datos cardiovascular.csv se refiere a las cifras de defunciones por problemas cardiovascularesen Costa Rica en el periodo 2000-2007.
+```{r}
+#Importe los datos a R.
+cardio=read_csv("datos/cardiovascular.csv")
+#grafico
+cardio.ts=ts(cardio$y,start=c(2000,1),frequency=12)
+ts.plot(cardio.ts)
+```
+Descomposición clásica aditiva de la serie
+```{r}
+aditivo=decompose(cardio.ts,type="additive")
+autoplot(aditivo)
+```
+la tendencia se estabiliza brevemente antes de experimentar un nuevoaumento significativo, alcanzando un punto máximo. En cuanto al componente estacional, se observan patronesestacionales claros y consistentes que parecen repetirse anualmente, indicando una estructura estacional biendefinida en la serie de tiempo. Por último, el componente aleatorio presenta una variabilidad considerable, conpicos y caídas que no siguen un patrón claro.
+Realice la descomposición STL de la serie y compare con el punto anterior.
+
+Descomposición STL
+```{r}
+cardio.stl1=stl(cardio.ts,t.window=20, s.window="periodic", robust=TRUE)
+autoplot(cardio.stl1)
+```
+Aunque la serie de tiempo muestra un comportamiento cambiante, la descomposición STL suaviza la tendencia mejor que la aditiva, permitiendo una visualización más clara de su dirección general. Los patrones deestacionalidad y los errores observados permanecen muy similares a los encontrados en el análisis anterior.
+
+Ajuste de un modelo de suavizamiento exponencial apropiado para la serie de defunciones por problemas cardiovasculares y pronostico para enero, febrero y marzo de 2008.
+```{r}
+#Holt-winters
+library(forecast)
+cardio.ts <- ts(cardio$y, start=c(2000, 1), frequency=12)
+cardio_train <- window(cardio.ts, end=c(2007,12))
+fit <- ets(cardio_train)
+summary(fit)
+forecast_2008 <- forecast(fit, h=3)
+plot(forecast_2008)
+```
+
+Ajuste de modelo de suavizamiento exponencial para la serie de ventas y pronóstico para los meses del año 2005. 
+```{r}
+y.train<-window(y,start=c(1991,1),end=c(1999,12))
+y.test<-window(y,start=c(2000,1),end=c(2000,12))
+y.stl3<-stl(y.train,t.window=20, s.window="periodic", robust=TRUE)
+
+pronostico<-forecast(y.stl3,h=12)
+
+plot(pronostico)
+points(y.test,type="l",col=2)
+```
+
+
+#Lista 2. Suavizamiento y regresión
+    1.En la base de datos cardiovascular.csv se refiere a las cifras de defunciones por problemas cardiovasculares en Costa Rica en el periodo 2000-2007.
+```{r}
+cardio=read_csv("datos/cardiovascular.csv")#grafico
+cardio.ts=ts(cardio$y,start=c(2000,1),frequency=12)
+ts.plot(cardio.ts)#No se logra ver componentes con claridad, se descompone
+#No St ni Tt, visible se aplica descomposición STL se nota cierta tendencia 
+cardio.stl1=stl(cardio.ts,t.window=20, s.window="periodic", robust=TRUE)
+autoplot(cardio.stl1)
+```
+    Ajuste de modelo de regresión apropiado y produzca pronósticos para los 12 meses de 2008.
+  
+```{r}
+#Modelo de tendencia
+mod.t<-tslm(cardio.ts~trend+I(trend^2))
+summary(mod.t)
+#Pruebas
+checkresiduals(mod.t)
+```
+```{r}
+#Modelo estacional
+mods<-tslm(cardio.ts~trend+I(trend^2)+season)
+summary(mods)
+checkresiduals(mods)
+ajustados=mods$fitted.values
+```
+
+¿Cuál modelo es mejor?
+Eso depende de los parametros con los que se desean trabajar si se desea un mejor ajuste de los valores al modelo (r*2 cercano a 1) o un errores con mejor distribución
+```{r}
+pronostico<-forecast(mods,h=12)
+pronostico
+
+autoplot(cardio.ts) +
+  autolayer(ajustados, series = "ajustado") +
+  autolayer(pronostico, series = "pronostico")
+
+```
+```{r}
+pronosticot<-forecast(mod.t,h=12)
+pronosticot
+
+autoplot(cardio.ts) +
+  autolayer(mod.t$fitted.values, series = "ajustado") +
+  autolayer(pronostico, series = "pronostico")
+```
+
+Analis de los supuestos del modelo ajustado.
+```{r}
+checkresiduals(mods)
+```
+
+```{r}
+set.seed(123) # Para reproducibilidad
+
+# Generar una serie de tiempo ficticia con cambios lentos en la media
+time <- 1:100
+nivel_lento <- 50 + 0.1 * time + rnorm(100, 0, 2)  # Un nivel que crece lentamente
+
+# Graficar la serie
+plot(time, nivel_lento, type="l", col="blue", lwd=2,
+     main="Serie con cambios lentos en la media o nivel",
+     xlab="Tiempo", ylab="Valores")
+
+```
+

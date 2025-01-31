@@ -1,0 +1,79 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-09-16"
+---
+Descomposición y analisis de serie, tomando solo un periodo para probar pronostico realizado
+Carga de librerías y base de datos
+```{r}
+library(ggplot2)
+library(forecast)
+library(fpp2)
+
+EUR <- read_excel("USD-EUR.xlsx")
+fecha <- as.Date(EUR$TIME_PERIOD)
+Y <- as.integer(EUR$Y)
+
+#serie temporal diaria
+eurts <- ts(EUR$Y, frequency = 365, start = c(1999,1))
+```
+
+
+Gráfica serie temporal
+```{r}
+plot1 <- ggplot(EUR, aes(x=fecha,y=Y)) + 
+    geom_line() 
+plot1
+plot1 + scale_x_date(date_labels = "%m-%Y")
+plot1 + scale_x_date(date_breaks = "5 year")
+aut
+```
+
+-Gráfico
+```{r}
+#Definición tipo de descomposición
+multiplicativo<-decompose(eurts,type="multiplicative")
+
+autoplot(multiplicativo,range.bars = FALSE) 
+```
+
+```{r}
+#Para filtrar para cierto periodo
+library(dplyr)
+
+# Filtrar los datos entre 2010 y 2024
+datos_filtrados <- EUR %>%
+  filter(fecha >= as.Date("2010-01-01") & fecha <= as.Date("2024-12-31"))
+
+TIME_PERIOD <- as.Date(datos_filtrados$TIME_PERIOD)
+Y <- as.integer(datos_filtrados$Y)
+
+plot1 <- ggplot(datos_filtrados, aes(x=TIME_PERIOD,y=Y)) + 
+    geom_line() 
+plot1
+
+filtrots <- ts(datos_filtrados$Y, frequency = 365, start = c(2010,1))
+multiplicativof<-decompose(filtrots,type="multiplicative")
+
+autoplot(multiplicativof,range.bars = FALSE) 
+```
+
+```{r}
+GBP <- read_excel("GBP-EURO.xlsx")
+fecha <- as.Date(GBP$TIME_PERIOD)
+Y <- as.integer(GBP$Y)
+
+#serie temporal diaria
+gts <- ts(GBP$Y, frequency = 365, start = c(1999,1))
+```
+
+
+Gráfica serie temporal
+```{r}
+plot1 <- ggplot(GBP, aes(x=fecha,y=Y)) + 
+    geom_line() 
+plot1
+plot1 + scale_x_date(date_labels = "%m-%Y")
+plot1 + scale_x_date(date_breaks = "5 year")
+autoplot(gts)
+```
